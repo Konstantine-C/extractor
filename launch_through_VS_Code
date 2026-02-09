@@ -1,0 +1,123 @@
+import os
+import zipfile
+import io
+import shutil
+import re
+
+# --- CONFIGURATION ---
+# EXTENSIONS TO EXTRACT (Add or remove as needed)
+ALLOWED_EXTS = {'.jpg', '.jpeg', '.png', '.tiff', '.tif', '.pdf', '.idml', '.indd', '.otf', '.lst'}
+
+def fix_windows_path(path):
+    """Handles long file paths on Windows (260+ characters)."""
+    if os.name == 'nt':
+        path = os.path.normpath(path)
+        if not path.startswith('\\\\?\\'):
+            path = '\\\\?\\' + path
+    return path
+
+def clean_zip_name(zip_filename):
+    """Generates a clean folder name based on the zip filename."""
+    name = os.path.splitext(zip_filename)[0]
+    name = name.upper()
+    # Remove standard prefixes (FW, SS, etc.)
+    name = re.sub(r'^(FW|SS|HO|SP)\d{2}_', '', name)
+    # Remove standard suffixes (1X1, RGB, etc.)
+    name = re.sub(r'(_|\-)(1X1|RGB|CMYK|DIGITAL|PRINT|SOCIAL|EMAIL|HD|LOWRES|HR|LR)$', '', name)
+    # Clean up underscores
+    name = re.sub(r'[_\-]+', '_', name)
+    parts = name.split('_')
+    # Limit to first 6 parts to avoid super long names
+    if len(parts) > 6:
+        name = '_'.join(parts[:6])
+    name = name.strip('_')
+    return name
+
+def extract_from_zip(zip_file, output_root, zip_folder_name):
+    """
+    Extracts files from a zip object.
+    Uses shutil.copyfileobj to handle LARGE files without using RAM.
+    """
+    # Get list of files inside zip
+    file_list = zip_file.infolist()
+    
+    for member in file_list:
+        if member.is_dir():
+            continue
+
+        filename = member.filename
+        _, ext = os.path.splitext(filename.lower())
+
+        # 1. Handle Allowed Extensions
+        if ext in ALLOWED_EXTS:
+            ext_folder = ext.lstrip('.').upper()
+            short_path = os.path.basename(filename)
+            
+            # Construct output path: Output/ZipName/JPG/filename.jpg
+            final_dir = os.path.join(output_root, zip_folder_name, ext_folder)
+            os.makedirs(final_dir, exist_ok=True)
+            
+            target_path = fix_windows_path(os.path.join(final_dir, short_path))
+
+            try:
+                # STREAMING EXTRACTION (Low Memory Usage)
+                # We open source and target and stream bytes between them
+                with zip_file.open(member) as source, open(target_path, "wb") as target:
+                    shutil.copyfileobj(source, target)
+                    
+                print(f"   --> Extracted: {short_path}")
+                
+            except Exception as e:
+                print(f"   [!] Failed to extract {filename}: {e}")
+
+        # 2. Handle Nested ZIPs (Recursive)
+        elif ext == '.zip':
+            print(f"   ... Found nested zip: {filename}")
+            try:
+                # Note: For nested zips, we still have to read them into memory 
+                # to open them as a ZipFile object without extracting to temp.
+                # If nested zips are massive (>1GB), this specific part might need temp files.
+                nested_data = zip_file.read(member)
+                with zipfile.ZipFile(io.BytesIO(nested_data)) as nested_zip:
+                    extract_from_zip(nested_zip, output_root, zip_folder_name)
+            except Exception as e:
+                print(f"   [!] Failed to open nested zip {filename}: {e}")
+
+def process_folder(input_dir, output_dir):
+    if not os.path.exists(input_dir):
+        print(f"Error: Input folder not found: {input_dir}")
+        return
+
+    # Find all top-level zip files
+    zip_files = [f for f in os.listdir(input_dir) if f.lower().endswith(".zip")]
+    
+    if not zip_files:
+        print("No .zip files found in the input directory.")
+        return
+
+    print(f"Found {len(zip_files)} ZIP files. Starting processing...")
+    print("-" * 50)
+
+    for i, file in enumerate(zip_files):
+        zip_path = os.path.join(input_dir, file)
+        print(f"[{i+1}/{len(zip_files)}] Processing: {file}")
+
+        try:
+            with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+                folder_name = clean_zip_name(file)
+                extract_from_zip(zip_ref, output_dir, folder_name)
+        except zipfile.BadZipFile:
+            print(f"   [!] ERROR: Bad ZIP file (corrupt): {file}")
+        except Exception as e:
+            print(f"   [!] ERROR processing {file}: {e}")
+            
+    print("-" * 50)
+    print("All done!")
+
+# --- EXECUTION ---
+if __name__ == "__main__":
+
+    INPUT_FOLDER = r"PATH"
+    OUTPUT_FOLDER = r"PATH"
+
+    process_folder(INPUT_FOLDER, OUTPUT_FOLDER)
