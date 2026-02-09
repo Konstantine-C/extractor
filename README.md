@@ -5,3 +5,7 @@ With this little script, I rename the folders by removing unnecessary text and p
 
 
 To use it, you need to build the app using pyinstaller. 
+
+UPDATE 09/02
+
+I have changed the code, so it can also be run via the compiler directly. Code is in separate file
